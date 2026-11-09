@@ -2236,6 +2236,47 @@ var jsPDF = (function (global) {
       });
     };
     
+    var clearDomNode = function (node) {
+      while (node.firstChild) {
+        node.removeChild(node.firstChild);
+      }
+    };
+
+    var initializeNewWindow = function (window) {
+      var targetDocument = window.document;
+      var html = targetDocument.documentElement;
+      var head = targetDocument.head;
+      var body = targetDocument.body;
+      var style;
+
+      if (!head) {
+        head = targetDocument.createElement('head');
+        html.appendChild(head);
+      }
+
+      if (!body) {
+        body = targetDocument.createElement('body');
+        html.appendChild(body);
+      }
+
+      clearDomNode(head);
+      clearDomNode(body);
+
+      style = targetDocument.createElement('style');
+      style.appendChild(
+        targetDocument.createTextNode(
+          'html, body { padding: 0; margin: 0; } iframe { width: 100%; height: 100%; border: 0;}'
+        )
+      );
+
+      head.appendChild(style);
+
+      return {
+        document: targetDocument,
+        body: body
+      };
+    };
+
     /**
      * Generates the PDF document.
      *
@@ -2253,7 +2294,6 @@ var jsPDF = (function (global) {
     var output = API.output = API.__private__.output = SAFE(function output(type, options) {
       options = options || {};
 
-      var pdfDocument = buildDocument();
       if (typeof options === "string") {
         options = {
           filename: options
@@ -2264,41 +2304,48 @@ var jsPDF = (function (global) {
 
       switch (type) {
         case undefined:
-          return pdfDocument;
+          return buildDocument();
         case 'save':
           API.save(options.filename);
           break;
         case 'arraybuffer':
-          return getArrayBuffer(pdfDocument);
+          return getArrayBuffer(buildDocument());
         case 'blob':
-          return getBlob(pdfDocument);
+          return getBlob(buildDocument());
         case 'bloburi':
         case 'bloburl':
           // Developer is responsible of calling revokeObjectURL
           if (typeof global.URL !== "undefined" && typeof global.URL.createObjectURL === "function") {
-            return global.URL && global.URL.createObjectURL(getBlob(pdfDocument)) || void 0;
-          } else {f
+            return global.URL && global.URL.createObjectURL(getBlob(buildDocument())) || void 0;
+          } else {
             console.warn('bloburl is not supported by your system, because URL.createObjectURL is not supported by your browser.');
           }
           break;
         case 'datauristring':
         case 'dataurlstring':
-          return 'data:application/pdf;filename=' + options.filename + ';base64,' + btoa(pdfDocument);
+            var dataURI = '';
+            var pdfDocument = buildDocument();
+            try {
+                dataURI = btoa(pdfDocument);
+            } catch(e) {
+                dataURI = btoa(unescape(encodeURIComponent(pdfDocument)));
+            }
+            return 'data:application/pdf;filename=' + encodeURIComponent(options.filename) + ';base64,' + dataURI;
+            break;
         case 'dataurlnewwindow':
-          var htmlForNewWindow = '<html>' +
-            '<style>html, body { padding: 0; margin: 0; } iframe { width: 100%; height: 100%; border: 0;}  </style>' +
-            '<body>' +
-            '<iframe src="' + this.output('datauristring') + '"></iframe>' +
-            '</body></html>';
           var nW = global.open();
           if (nW !== null) {
-            nW.document.write(htmlForNewWindow)
+            var initializedDataUrlWindow = initializeNewWindow(nW);
+            var dataUrlFrame = initializedDataUrlWindow.document.createElement('iframe');
+
+            dataUrlFrame.src = this.output('datauristring', options);
+            initializedDataUrlWindow.body.appendChild(dataUrlFrame);
           }
           if (nW || typeof safari === "undefined") return nW;
           /* pass through */
         case 'datauri':
         case 'dataurl':
-          return global.document.location.href = 'data:application/pdf;filename=' + options.filename + ';base64,' + btoa(pdfDocument);
+          return global.document.location.href = this.output('datauristring', options);
         default:
           return null;
       }
